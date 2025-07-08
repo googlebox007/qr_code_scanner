@@ -1,12 +1,22 @@
 import customtkinter as ctk
 from PIL import Image
 import cv2
-from pyzbar.pyzbar import decode
+import numpy as np
 import mss
 import threading
 import time
 from tkinter import filedialog
 import sys
+
+# Conditional import and setup for cross-platform QR decoding
+if sys.platform == "win32":
+    # Helper class to mimic the structure of pyzbar's decoded objects for Windows
+    class DecodedObject:
+        def __init__(self, data):
+            self.type = 'QRCODE'
+            self.data = data.encode('utf-8')
+else:
+    from pyzbar.pyzbar import decode
 
 class QRCodeScannerApp(ctk.CTk):
     def __init__(self):
@@ -15,6 +25,9 @@ class QRCodeScannerApp(ctk.CTk):
         self.title("全能二维码扫描器")
         self.geometry("800x600")
 
+        # --- Platform-specific detector ---
+        # Initialized lazily in _decode_image for Windows
+
         # --- State Variables ---
         self.scanning = False
         self.scan_thread = None
@@ -22,6 +35,7 @@ class QRCodeScannerApp(ctk.CTk):
         self.latest_scan_result = None
         self.updater_id = None
         self.last_decoded_data = None
+        self.is_realtime_screen_scanning = False
 
         # --- UI Elements ---
         self.main_frame = ctk.CTkFrame(self)
@@ -100,6 +114,7 @@ class QRCodeScannerApp(ctk.CTk):
         self._set_scan_buttons_state("disabled")
         self.update_result_text("启动实时区域扫描... 请拖动透明窗口到二维码上方。")
         self.scanning = True
+        self.is_realtime_screen_scanning = True
         if not self.overlay_window or not self.overlay_window.winfo_exists():
             self.overlay_window = OverlayWindow(self)
         self.focus_force()
@@ -229,6 +244,7 @@ class QRCodeScannerApp(ctk.CTk):
             self.overlay_window.destroy()
         self.overlay_window = None
         self.last_decoded_data = None
+        self.is_realtime_screen_scanning = False
         self.copy_button.configure(state="disabled")
         if not is_starting_new_task:
             self._reset_ui_to_initial_state()
@@ -262,7 +278,18 @@ class QRCodeScannerApp(ctk.CTk):
 
     def _decode_image(self, image):
         try:
-            return decode(image)
+            if sys.platform == "win32":
+                # Initialize detector only when needed on Windows
+                if not hasattr(self, 'barcode_detector'):
+                    self.barcode_detector = cv2.barcode.BarcodeDetector()
+                cv_image = np.array(image.convert('RGB'))
+                ok, decoded_info, _, _ = self.barcode_detector.detectAndDecodeWithType(cv_image)
+                if ok and decoded_info:
+                    return [DecodedObject(decoded_info[0])]
+                else:
+                    return []
+            else:
+                return decode(image)
         except Exception:
             return []
 
@@ -358,5 +385,10 @@ class ScreenSelectionOverlay(ctk.CTkToplevel):
         self.callback(0, 0, 0, 0)
 
 if __name__ == "__main__":
-    app = QRCodeScannerApp()
-    app.mainloop()
+    try:
+        app = QRCodeScannerApp()
+        app.mainloop()
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        import traceback
+        traceback.print_exc()
